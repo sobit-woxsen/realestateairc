@@ -1,118 +1,1187 @@
 openapi: 3.0.3
 info:
-  title: Real Estate API
+  title: Real Estate API & MCP Hub
+  description: >
+    Production REST API and identity-aware MCP tools for the Real Estate management platform.
+    Covers self-service client authentication, property marketplace search and CRUD,
+    lead and inquiry pipelines, saved favorites, agent dashboards, and admin user administration.
+    All protected endpoints require a JWT Bearer token obtained from the `/api/auth/login` endpoint.
   version: 1.0.0
-  description: API documentation for the Real Estate backend application.
+
 servers:
-  - url: http://localhost:3000
-    description: Local
+  - url: https://realestateairc.onrender.com
+    description: Production Server (LockMCP Tool Proxy Target)
+  - url: http://localhost:5000
+    description: Local Development Server
+
+security:
+  - bearerAuth: []
+
+tags:
+  - name: Properties
+    description: Real estate properties marketplace, search, and listing CRUD operations.
+  - name: Agent
+    description: Agent dashboard analytics, managed property listings, and assigned lead pipelines (ROLE_AGENT).
+  - name: Admin
+    description: Administrative user management and company-wide lead routing (ROLE_ADMIN).
+  - name: Inquiries
+    description: Client property inquiries and lead lifecycle management.
+  - name: Favorites
+    description: Client saved / bookmarked property listings (ROLE_CLIENT).
+  - name: Auth
+    description: Self-service registration, authentication, and JWT token rotation.
+  - name: System
+    description: Health monitoring and diagnostic endpoints.
+
+paths:
+  # ==========================================
+  # AUTHENTICATION ENDPOINTS
+  # ==========================================
+  /api/auth/register:
+    post:
+      tags: [Auth]
+      operationId: registerUser
+      summary: Register a new client account
+      description: >
+        Creates a new user account with default CLIENT permissions and immediately returns JWT access
+        and refresh tokens. Passwords must be at least 6 characters.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterRequest'
+      responses:
+        '201':
+          description: User registered successfully with auth tokens.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    $ref: '#/components/schemas/User'
+                  accessToken:
+                    type: string
+                    example: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+                  refreshToken:
+                    type: string
+                    example: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+        '400':
+          $ref: '#/components/responses/ValidationError'
+
+  /api/auth/login:
+    post:
+      tags: [Auth]
+      operationId: loginUser
+      summary: Authenticate user and obtain JWT tokens
+      description: >
+        Validates email and password credentials, returns user profile, and generates a pair of
+        short-lived JWT access token (15m) and long-lived refresh token (7d).
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '200':
+          description: Login successful.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    $ref: '#/components/schemas/User'
+                  accessToken:
+                    type: string
+                    example: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+                  refreshToken:
+                    type: string
+                    example: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+
+  /api/auth/refresh-token:
+    post:
+      tags: [Auth]
+      operationId: refreshToken
+      summary: Refresh an expired JWT access token
+      description: >
+        Exchanges a valid refresh token stored in the database for a new JWT access token and rotated refresh token.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RefreshTokenRequest'
+      responses:
+        '200':
+          description: Tokens refreshed successfully.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  accessToken:
+                    type: string
+                    example: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+                  refreshToken:
+                    type: string
+                    example: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+
+  /api/auth/logout:
+    post:
+      tags: [Auth]
+      operationId: logoutUser
+      summary: Invalidate user session and refresh token
+      description: Clears the stored refresh token from the database for the authenticated user.
+      responses:
+        '200':
+          description: Logged out successfully.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  message:
+                    type: string
+                    example: Logged out successfully
+
+  # ==========================================
+  # PROPERTIES MARKETPLACE
+  # ==========================================
+  /api/properties:
+    get:
+      tags: [Properties]
+      operationId: getAllProperties
+      summary: List and filter real estate properties
+      description: >
+        Returns a paginated list of properties matching optional filters. Publicly accessible.
+        Supports filtering by city, state, property type, status, price range, bedrooms, and keyword search in title.
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/PageParam'
+        - $ref: '#/components/parameters/LimitParam'
+        - name: search
+          in: query
+          description: Case-insensitive keyword search in property title.
+          schema:
+            type: string
+            example: loft
+        - name: city
+          in: query
+          description: Filter properties by city name.
+          schema:
+            type: string
+            example: New York
+        - name: state
+          in: query
+          description: Filter properties by two-letter state code or name.
+          schema:
+            type: string
+            example: NY
+        - name: type
+          in: query
+          description: Filter by property category.
+          schema:
+            $ref: '#/components/schemas/PropertyType'
+        - name: status
+          in: query
+          description: Filter by property listing status.
+          schema:
+            $ref: '#/components/schemas/PropertyStatus'
+        - name: minPrice
+          in: query
+          description: Minimum property price in USD.
+          schema:
+            type: number
+            minimum: 0
+            example: 200000
+        - name: maxPrice
+          in: query
+          description: Maximum property price in USD.
+          schema:
+            type: number
+            minimum: 0
+            example: 1000000
+        - name: bedrooms
+          in: query
+          description: Minimum number of bedrooms required.
+          schema:
+            type: integer
+            minimum: 0
+            example: 2
+        - name: bathrooms
+          in: query
+          description: Minimum number of bathrooms required.
+          schema:
+            type: number
+            minimum: 0
+            example: 2
+      responses:
+        '200':
+          description: Paginated list of properties.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Property'
+                  pagination:
+                    $ref: '#/components/schemas/PaginationMeta'
+
+    post:
+      tags: [Properties]
+      operationId: createProperty
+      summary: Create a new real estate property listing
+      description: >
+        Publishes a new property listing assigned to the authenticated user.
+        Requires `ROLE_AGENT` or `ROLE_ADMIN`. Prices are in USD; area is in sqft.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreatePropertyRequest'
+      responses:
+        '201':
+          description: Property listing created successfully.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    $ref: '#/components/schemas/Property'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+
+  /api/properties/{id}:
+    get:
+      tags: [Properties]
+      operationId: getPropertyById
+      summary: Get property details by UUID
+      description: Returns complete details for a single property listing, including its listing agent contact info.
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/PropertyIdPath'
+      responses:
+        '200':
+          description: Property found.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    $ref: '#/components/schemas/Property'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+    put:
+      tags: [Properties]
+      operationId: updateProperty
+      summary: Update an existing property listing
+      description: >
+        Updates details of a property listing. Agents can only update listings they created;
+        Administrators can update any listing.
+      parameters:
+        - $ref: '#/components/parameters/PropertyIdPath'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdatePropertyRequest'
+      responses:
+        '200':
+          description: Property updated successfully.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    $ref: '#/components/schemas/Property'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+    delete:
+      tags: [Properties]
+      operationId: deleteProperty
+      summary: Delete a property listing
+      description: >
+        Removes a property listing from the database. Listing agents can delete their own listings;
+        Administrators can delete any listing.
+      parameters:
+        - $ref: '#/components/parameters/PropertyIdPath'
+      responses:
+        '200':
+          description: Property deleted successfully.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  message:
+                    type: string
+                    example: Property deleted successfully
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+  # ==========================================
+  # INQUIRIES & LEADS
+  # ==========================================
+  /api/inquiries:
+    post:
+      tags: [Inquiries]
+      operationId: createInquiry
+      summary: Submit an inquiry for a property
+      description: >
+        Allows an authenticated client (ROLE_CLIENT) to inquire about a property.
+        The inquiry is automatically linked to the listing agent of that property.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateInquiryRequest'
+      responses:
+        '201':
+          description: Inquiry submitted successfully.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    $ref: '#/components/schemas/Inquiry'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+    get:
+      tags: [Admin]
+      operationId: getAllInquiries
+      summary: List all inquiries system-wide (Admin Only)
+      description: >
+        Returns all inquiries across the entire platform with client, property, and assigned agent details.
+        Requires `ROLE_ADMIN`.
+      parameters:
+        - $ref: '#/components/parameters/PageParam'
+        - $ref: '#/components/parameters/LimitParam'
+        - name: status
+          in: query
+          description: Filter inquiries by lifecycle status.
+          schema:
+            $ref: '#/components/schemas/InquiryStatus'
+      responses:
+        '200':
+          description: List of all inquiries.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Inquiry'
+                  pagination:
+                    $ref: '#/components/schemas/PaginationMeta'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+
+  /api/inquiries/my:
+    get:
+      tags: [Inquiries]
+      operationId: getMyInquiries
+      summary: List inquiries submitted by current client
+      description: >
+        Returns a paginated list of inquiries submitted by the authenticated client.
+        Requires `ROLE_CLIENT`.
+      parameters:
+        - $ref: '#/components/parameters/PageParam'
+        - $ref: '#/components/parameters/LimitParam'
+      responses:
+        '200':
+          description: Client inquiries list.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Inquiry'
+                  pagination:
+                    $ref: '#/components/schemas/PaginationMeta'
+
+  /api/inquiries/{id}:
+    get:
+      tags: [Inquiries]
+      operationId: getInquiryById
+      summary: Get inquiry details by UUID
+      description: >
+        Returns single inquiry details. Accessible by the client who submitted it,
+        the assigned agent, or an administrator.
+      parameters:
+        - $ref: '#/components/parameters/InquiryIdPath'
+      responses:
+        '200':
+          description: Inquiry details found.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    $ref: '#/components/schemas/Inquiry'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+  /api/inquiries/{id}/assign:
+    put:
+      tags: [Admin]
+      operationId: assignInquiryAgent
+      summary: Assign an inquiry to a specific agent (Admin Only)
+      description: >
+        Assigns or reassigns an inquiry to an active agent. Requires `ROLE_ADMIN`.
+        Target user must hold the `AGENT` role.
+      parameters:
+        - $ref: '#/components/parameters/InquiryIdPath'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AssignInquiryRequest'
+      responses:
+        '200':
+          description: Inquiry assigned successfully.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    $ref: '#/components/schemas/Inquiry'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+  /api/inquiries/{id}/status:
+    put:
+      tags: [Inquiries]
+      operationId: updateInquiryStatus
+      summary: Update inquiry lifecycle status
+      description: >
+        Updates the status of an inquiry (`NEW`, `CONTACTED`, `IN_PROGRESS`, `CLOSED`).
+        Accessible by assigned agents or administrators.
+      parameters:
+        - $ref: '#/components/parameters/InquiryIdPath'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateInquiryStatusRequest'
+      responses:
+        '200':
+          description: Status updated.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    $ref: '#/components/schemas/Inquiry'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+
+  # ==========================================
+  # FAVORITES (CLIENT ONLY)
+  # ==========================================
+  /api/favorites:
+    get:
+      tags: [Favorites]
+      operationId: getClientFavorites
+      summary: List saved favorite properties
+      description: Returns a paginated list of properties saved to the client's favorites. Requires `ROLE_CLIENT`.
+      parameters:
+        - $ref: '#/components/parameters/PageParam'
+        - $ref: '#/components/parameters/LimitParam'
+      responses:
+        '200':
+          description: List of saved favorites.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Favorite'
+                  pagination:
+                    $ref: '#/components/schemas/PaginationMeta'
+
+    post:
+      tags: [Favorites]
+      operationId: addFavoriteProperty
+      summary: Save a property to favorites
+      description: Adds a property to the client's saved list. Returns 409 if already saved. Requires `ROLE_CLIENT`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [propertyId]
+              properties:
+                propertyId:
+                  type: string
+                  format: uuid
+                  description: UUID of the property to bookmark.
+                  x-mcp-inject: "propertyIds"
+                  example: "987e6543-e21b-12d3-a456-426614174000"
+      responses:
+        '201':
+          description: Property bookmarked.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    $ref: '#/components/schemas/Favorite'
+        '409':
+          description: Already in favorites.
+
+  /api/favorites/{propertyId}:
+    delete:
+      tags: [Favorites]
+      operationId: removeFavoriteProperty
+      summary: Remove a property from saved favorites
+      description: Deletes a property bookmark for the authenticated client. Requires `ROLE_CLIENT`.
+      parameters:
+        - name: propertyId
+          in: path
+          required: true
+          description: UUID of the property to remove from saved favorites.
+          schema:
+            type: string
+            format: uuid
+            x-mcp-inject: "propertyIds"
+            example: "987e6543-e21b-12d3-a456-426614174000"
+      responses:
+        '200':
+          description: Removed from favorites.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: object
+                    nullable: true
+                    example: null
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+  # ==========================================
+  # AGENT DASHBOARD (AGENT ONLY)
+  # ==========================================
+  /api/agent/dashboard:
+    get:
+      tags: [Agent]
+      operationId: getAgentDashboardMetrics
+      summary: Get agent performance statistics and KPI metrics
+      description: >
+        Returns aggregate metrics for the authenticated agent: total assigned listings, active listings,
+        total received leads, and newly received uncontacted leads. Requires `ROLE_AGENT`.
+      responses:
+        '200':
+          description: Agent dashboard metrics.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: object
+                    properties:
+                      totalListings:
+                        type: integer
+                        example: 5
+                      totalLeads:
+                        type: integer
+                        example: 12
+                      newLeads:
+                        type: integer
+                        example: 3
+                      activeListings:
+                        type: integer
+                        example: 4
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+
+  /api/agent/listings:
+    get:
+      tags: [Agent]
+      operationId: getAgentManagedListings
+      summary: List properties managed by the authenticated agent
+      description: >
+        Returns a paginated list of properties listed by the agent, including real-time counters
+        of inquiries and favorites for each property. Requires `ROLE_AGENT`.
+      parameters:
+        - $ref: '#/components/parameters/PageParam'
+        - $ref: '#/components/parameters/LimitParam'
+      responses:
+        '200':
+          description: Agent listings with inquiry counters.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: array
+                    items:
+                      allOf:
+                        - $ref: '#/components/schemas/Property'
+                        - type: object
+                          properties:
+                            _count:
+                              type: object
+                              properties:
+                                inquiries:
+                                  type: integer
+                                  example: 4
+                                favorites:
+                                  type: integer
+                                  example: 7
+                  pagination:
+                    $ref: '#/components/schemas/PaginationMeta'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+
+  /api/agent/leads:
+    get:
+      tags: [Agent]
+      operationId: getAgentAssignedLeads
+      summary: List client leads assigned to the authenticated agent
+      description: >
+        Returns a paginated list of inquiries and leads assigned to the agent,
+        including client phone numbers, emails, and referenced property titles. Requires `ROLE_AGENT`.
+      parameters:
+        - $ref: '#/components/parameters/PageParam'
+        - $ref: '#/components/parameters/LimitParam'
+      responses:
+        '200':
+          description: Assigned leads list.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Inquiry'
+                  pagination:
+                    $ref: '#/components/schemas/PaginationMeta'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+
+  # ==========================================
+  # ADMIN USER MANAGEMENT (ADMIN ONLY)
+  # ==========================================
+  /api/users:
+    get:
+      tags: [Admin]
+      operationId: getAllUsers
+      summary: List all registered users (Admin Only)
+      description: Returns a paginated list of all system users with their roles and contact details. Requires `ROLE_ADMIN`.
+      parameters:
+        - $ref: '#/components/parameters/PageParam'
+        - $ref: '#/components/parameters/LimitParam'
+      responses:
+        '200':
+          description: List of users.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/User'
+                  pagination:
+                    $ref: '#/components/schemas/PaginationMeta'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+
+  /api/users/{id}:
+    get:
+      tags: [Admin]
+      operationId: getUserById
+      summary: Get user details by UUID (Admin Only)
+      description: Returns detailed profile for any user by UUID. Requires `ROLE_ADMIN`.
+      parameters:
+        - $ref: '#/components/parameters/UserIdPath'
+      responses:
+        '200':
+          description: User found.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    $ref: '#/components/schemas/User'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+    put:
+      tags: [Admin]
+      operationId: updateUser
+      summary: Update user details or change role (Admin Only)
+      description: >
+        Modifies a user's name, phone, or permission role (`ADMIN`, `AGENT`, `CLIENT`).
+        Requires `ROLE_ADMIN`.
+      parameters:
+        - $ref: '#/components/parameters/UserIdPath'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                firstName:
+                  type: string
+                  example: Sobit
+                lastName:
+                  type: string
+                  example: Admin
+                phone:
+                  type: string
+                  example: "555-0199"
+                role:
+                  $ref: '#/components/schemas/Role'
+      responses:
+        '200':
+          description: User updated.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    $ref: '#/components/schemas/User'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+    delete:
+      tags: [Admin]
+      operationId: deleteUser
+      summary: Delete user account (Admin Only)
+      description: Permanently removes a user account from the system. Requires `ROLE_ADMIN`.
+      parameters:
+        - $ref: '#/components/parameters/UserIdPath'
+      responses:
+        '200':
+          description: User deleted.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  message:
+                    type: string
+                    example: User deleted successfully
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+  # ==========================================
+  # SYSTEM HEALTH
+  # ==========================================
+  /api/health:
+    get:
+      tags: [System]
+      operationId: getHealthStatus
+      summary: System health and uptime check
+      description: Returns server operational status and ISO timestamp. Publicly accessible.
+      security: []
+      responses:
+        '200':
+          description: Server is running healthy.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  message:
+                    type: string
+                    example: API is running
+                  timestamp:
+                    type: string
+                    format: date-time
+                    example: "2026-08-27T06:10:17.000Z"
+
+# ==========================================
+# REUSABLE COMPONENTS
+# ==========================================
 components:
   securitySchemes:
     bearerAuth:
       type: http
       scheme: bearer
       bearerFormat: JWT
+      description: Standard JWT Bearer token header (`Authorization: Bearer <token>`).
+
+  parameters:
+    PageParam:
+      name: page
+      in: query
+      description: 1-based page number for pagination.
+      schema:
+        type: integer
+        default: 1
+        minimum: 1
+        example: 1
+
+    LimitParam:
+      name: limit
+      in: query
+      description: Number of records to return per page.
+      schema:
+        type: integer
+        default: 10
+        minimum: 1
+        maximum: 100
+        example: 10
+
+    PropertyIdPath:
+      name: id
+      in: path
+      required: true
+      description: UUID identifier of the property.
+      schema:
+        type: string
+        format: uuid
+        x-mcp-inject: "propertyIds"
+        example: "987e6543-e21b-12d3-a456-426614174000"
+
+    InquiryIdPath:
+      name: id
+      in: path
+      required: true
+      description: UUID identifier of the inquiry / lead.
+      schema:
+        type: string
+        format: uuid
+        x-mcp-inject: "inquiryIds"
+        example: "456e6543-e21b-12d3-a456-426614174000"
+
+    UserIdPath:
+      name: id
+      in: path
+      required: true
+      description: UUID identifier of the user.
+      schema:
+        type: string
+        format: uuid
+        x-mcp-inject: "userIds"
+        example: "0e5fdbe2-35ff-4588-b14c-98fb56153f5e"
+
+  responses:
+    ValidationError:
+      description: Validation error in request body or query parameters.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ValidationErrorResponse'
+
+    UnauthorizedError:
+      description: Missing or invalid JWT credentials.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+
+    ForbiddenError:
+      description: User lacks sufficient role privileges.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+
+    NotFoundError:
+      description: Requested resource was not found.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+
   schemas:
+    Role:
+      type: string
+      enum: [ADMIN, AGENT, CLIENT]
+      description: User authorization role.
+      example: AGENT
+
+    PropertyType:
+      type: string
+      enum: [HOUSE, APARTMENT, CONDO, TOWNHOUSE, LAND, COMMERCIAL]
+      description: Property classification.
+      example: APARTMENT
+
+    PropertyStatus:
+      type: string
+      enum: [AVAILABLE, SOLD, PENDING, RENTED]
+      description: Availability status of listing.
+      example: AVAILABLE
+
+    InquiryStatus:
+      type: string
+      enum: [NEW, CONTACTED, IN_PROGRESS, CLOSED]
+      description: Lifecycle status of a lead inquiry.
+      example: NEW
+
     User:
       type: object
       properties:
         id:
           type: string
           format: uuid
-          example: 123e4567-e89b-12d3-a456-426614174000
+          example: "0e5fdbe2-35ff-4588-b14c-98fb56153f5e"
         email:
           type: string
           format: email
-          example: john.doe@example.com
+          example: "sobittest@gmail.com"
         firstName:
           type: string
-          example: John
+          example: "Sobit"
         lastName:
           type: string
-          example: Doe
+          example: "Admin"
         phone:
           type: string
-          example: "+1-555-555-5555"
+          nullable: true
+          example: "555-0100"
         role:
           $ref: '#/components/schemas/Role'
         createdAt:
           type: string
           format: date-time
-          example: "2023-01-01T12:00:00Z"
+          example: "2026-08-27T05:41:25.201Z"
         updatedAt:
           type: string
           format: date-time
-          example: "2023-01-01T12:00:00Z"
-    Role:
-      type: string
-      enum: [CLIENT, AGENT, ADMIN]
-      example: CLIENT
-    PropertyType:
-      type: string
-      enum: [HOUSE, APARTMENT, CONDO, LAND, COMMERCIAL]
-      example: HOUSE
-    PropertyStatus:
-      type: string
-      enum: [AVAILABLE, PENDING, SOLD, RENTED]
-      example: AVAILABLE
-    InquiryStatus:
-      type: string
-      enum: [NEW, IN_PROGRESS, RESOLVED, CLOSED]
-      example: NEW
+          example: "2026-08-27T05:41:25.201Z"
+
     Property:
       type: object
       properties:
         id:
           type: string
           format: uuid
-          example: 987e6543-e21b-12d3-a456-426614174000
+          example: "987e6543-e21b-12d3-a456-426614174000"
         title:
           type: string
-          example: "Beautiful Family Home"
+          example: "Modern Downtown Loft"
         description:
           type: string
-          example: "Spacious 4 bedroom house with a large backyard."
+          example: "Stunning open-concept loft with floor-to-ceiling windows."
         type:
           $ref: '#/components/schemas/PropertyType'
         status:
           $ref: '#/components/schemas/PropertyStatus'
         price:
           type: number
-          example: 450000
-        city:
-          type: string
-          example: "Austin"
-        state:
-          type: string
-          example: "TX"
+          description: Price in USD.
+          example: 425000
+        area:
+          type: number
+          description: Area in square feet.
+          example: 1200
         bedrooms:
           type: integer
-          example: 4
+          example: 2
         bathrooms:
           type: number
-          example: 2.5
+          example: 2
+        address:
+          type: string
+          example: "350 5th Avenue, Apt 12B"
+        city:
+          type: string
+          example: "New York"
+        state:
+          type: string
+          example: "NY"
+        zipCode:
+          type: string
+          example: "10118"
+        images:
+          type: array
+          items:
+            type: string
+          example: ["https://images.unsplash.com/photo-1502672260266-1c1ef2d93688?w=800"]
+        amenities:
+          type: array
+          items:
+            type: string
+          example: ["Doorman", "Gym", "Rooftop Deck", "In-Unit Laundry"]
+        yearBuilt:
+          type: integer
+          nullable: true
+          example: 2019
+        agentId:
+          type: string
+          format: uuid
+          example: "2b7bef21-85c8-4714-842d-018c24da4665"
         agent:
-          $ref: '#/components/schemas/User'
+          type: object
+          properties:
+            id:
+              type: string
+              format: uuid
+            firstName:
+              type: string
+            lastName:
+              type: string
+            email:
+              type: string
         createdAt:
           type: string
           format: date-time
-          example: "2023-01-01T12:00:00Z"
         updatedAt:
           type: string
           format: date-time
-          example: "2023-01-01T12:00:00Z"
+
     Inquiry:
       type: object
       properties:
         id:
           type: string
           format: uuid
-          example: 456e6543-e21b-12d3-a456-426614174000
+          example: "456e6543-e21b-12d3-a456-426614174000"
         message:
           type: string
-          example: "I am interested in scheduling a viewing."
+          example: "I am interested in this property. Could you schedule a viewing?"
         status:
           $ref: '#/components/schemas/InquiryStatus'
+        clientId:
+          type: string
+          format: uuid
+        propertyId:
+          type: string
+          format: uuid
+        agentId:
+          type: string
+          format: uuid
+          nullable: true
         client:
           $ref: '#/components/schemas/User'
         property:
@@ -122,24 +1191,29 @@ components:
         createdAt:
           type: string
           format: date-time
-          example: "2023-01-01T12:00:00Z"
         updatedAt:
           type: string
           format: date-time
-          example: "2023-01-01T12:00:00Z"
+
     Favorite:
       type: object
       properties:
         id:
           type: string
           format: uuid
-          example: 789e6543-e21b-12d3-a456-426614174000
+          example: "789e6543-e21b-12d3-a456-426614174000"
+        userId:
+          type: string
+          format: uuid
+        propertyId:
+          type: string
+          format: uuid
         property:
           $ref: '#/components/schemas/Property'
         createdAt:
           type: string
           format: date-time
-          example: "2023-01-01T12:00:00Z"
+
     PaginationMeta:
       type: object
       properties:
@@ -151,10 +1225,11 @@ components:
           example: 10
         total:
           type: integer
-          example: 50
+          example: 25
         pages:
           type: integer
-          example: 5
+          example: 3
+
     ErrorResponse:
       type: object
       properties:
@@ -163,7 +1238,8 @@ components:
           example: false
         message:
           type: string
-          example: "An error occurred"
+          example: "Resource not found or unauthorized"
+
     ValidationErrorResponse:
       type: object
       properties:
@@ -183,16 +1259,8 @@ components:
                 example: "email"
               message:
                 type: string
-                example: "Must be a valid email address"
-    AuthTokens:
-      type: object
-      properties:
-        accessToken:
-          type: string
-          example: "eyJhbGciOiJIUzI1NiIsInR..."
-        refreshToken:
-          type: string
-          example: "dGhpcy1pcy1hLXJlZnJlc2gtdG9rZW4..."
+                example: "Valid email is required"
+
     RegisterRequest:
       type: object
       required: [email, password, firstName, lastName]
@@ -200,11 +1268,11 @@ components:
         email:
           type: string
           format: email
-          example: jane.doe@example.com
+          example: "client@example.com"
         password:
           type: string
-          format: password
-          example: "StrongP@ssw0rd!"
+          minLength: 6
+          example: "Password123!"
         firstName:
           type: string
           example: "Jane"
@@ -213,7 +1281,8 @@ components:
           example: "Doe"
         phone:
           type: string
-          example: "+1-234-567-8900"
+          example: "555-0102"
+
     LoginRequest:
       type: object
       required: [email, password]
@@ -221,75 +1290,102 @@ components:
         email:
           type: string
           format: email
-          example: jane.doe@example.com
+          example: "sobittest@gmail.com"
         password:
           type: string
-          format: password
-          example: "StrongP@ssw0rd!"
+          example: "Password123!"
+
     RefreshTokenRequest:
       type: object
       required: [refreshToken]
       properties:
         refreshToken:
           type: string
-          example: "dGhpcy1pcy1hLXJlZnJlc2gtdG9rZW4..."
+          example: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+
     CreatePropertyRequest:
       type: object
-      required: [title, type, status, price, city, state]
+      required: [title, type, price, area, bedrooms, bathrooms, address, city, state, zipCode]
       properties:
         title:
           type: string
-          example: "Modern Downtown Condo"
+          example: "Modern Downtown Loft"
         description:
           type: string
-          example: "2 bed, 2 bath with city views."
+          example: "Stunning open-concept loft in the heart of downtown."
         type:
           $ref: '#/components/schemas/PropertyType'
         status:
           $ref: '#/components/schemas/PropertyStatus'
+          default: AVAILABLE
         price:
           type: number
-          example: 350000
-        city:
-          type: string
-          example: "Chicago"
-        state:
-          type: string
-          example: "IL"
+          example: 425000
+        area:
+          type: number
+          example: 1200
         bedrooms:
           type: integer
           example: 2
         bathrooms:
           type: number
           example: 2
+        address:
+          type: string
+          example: "350 5th Avenue, Apt 12B"
+        city:
+          type: string
+          example: "New York"
+        state:
+          type: string
+          example: "NY"
+        zipCode:
+          type: string
+          example: "10118"
+        images:
+          type: array
+          items:
+            type: string
+          example: ["https://images.unsplash.com/photo-1502672260266-1c1ef2d93688?w=800"]
+        amenities:
+          type: array
+          items:
+            type: string
+          example: ["Doorman", "Gym", "Rooftop Deck"]
+        yearBuilt:
+          type: integer
+          example: 2019
+
     UpdatePropertyRequest:
       type: object
       properties:
         title:
           type: string
-          example: "Updated Downtown Condo"
+          example: "Updated Luxury Loft"
         description:
           type: string
-          example: "Updated description."
         type:
           $ref: '#/components/schemas/PropertyType'
         status:
           $ref: '#/components/schemas/PropertyStatus'
         price:
           type: number
-          example: 340000
-        city:
-          type: string
-          example: "Chicago"
-        state:
-          type: string
-          example: "IL"
+          example: 450000
+        area:
+          type: number
         bedrooms:
           type: integer
-          example: 2
         bathrooms:
           type: number
-          example: 2
+        images:
+          type: array
+          items:
+            type: string
+        amenities:
+          type: array
+          items:
+            type: string
+
     CreateInquiryRequest:
       type: object
       required: [propertyId, message]
@@ -297,10 +1393,12 @@ components:
         propertyId:
           type: string
           format: uuid
-          example: 987e6543-e21b-12d3-a456-426614174000
+          x-mcp-inject: "propertyIds"
+          example: "987e6543-e21b-12d3-a456-426614174000"
         message:
           type: string
-          example: "Can we schedule a visit this weekend?"
+          example: "I am interested in scheduling a viewing this weekend."
+
     AssignInquiryRequest:
       type: object
       required: [agentId]
@@ -308,877 +1406,12 @@ components:
         agentId:
           type: string
           format: uuid
-          example: 123e4567-e89b-12d3-a456-426614174000
+          x-mcp-inject: "agentIds"
+          example: "2b7bef21-85c8-4714-842d-018c24da4665"
+
     UpdateInquiryStatusRequest:
       type: object
       required: [status]
       properties:
         status:
           $ref: '#/components/schemas/InquiryStatus'
-tags:
-  - name: Auth
-  - name: Users
-  - name: Properties
-  - name: Inquiries
-  - name: Favorites
-  - name: Agent
-paths:
-  /api/health:
-    get:
-      tags:
-        - Health
-      summary: Health check
-      responses:
-        '200':
-          description: OK
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  success:
-                    type: boolean
-                    example: true
-                  message:
-                    type: string
-                    example: "API is running"
-                  timestamp:
-                    type: string
-                    format: date-time
-                    example: "2023-01-01T12:00:00Z"
-  /api/auth/register:
-    post:
-      tags:
-        - Auth
-      summary: Register a new user
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/RegisterRequest'
-      responses:
-        '201':
-          description: User registered
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  success:
-                    type: boolean
-                    example: true
-                  user:
-                    $ref: '#/components/schemas/User'
-                  tokens:
-                    $ref: '#/components/schemas/AuthTokens'
-        '400':
-          description: Validation error
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ValidationErrorResponse'
-        '409':
-          description: Email exists
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-  /api/auth/login:
-    post:
-      tags:
-        - Auth
-      summary: Login user
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/LoginRequest'
-      responses:
-        '200':
-          description: Login successful
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  success:
-                    type: boolean
-                    example: true
-                  user:
-                    $ref: '#/components/schemas/User'
-                  tokens:
-                    $ref: '#/components/schemas/AuthTokens'
-        '401':
-          description: Invalid credentials
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-  /api/auth/refresh-token:
-    post:
-      tags:
-        - Auth
-      summary: Refresh tokens
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/RefreshTokenRequest'
-      responses:
-        '200':
-          description: Tokens refreshed
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  success:
-                    type: boolean
-                    example: true
-                  tokens:
-                    $ref: '#/components/schemas/AuthTokens'
-        '401':
-          description: Invalid token
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-  /api/auth/logout:
-    post:
-      tags:
-        - Auth
-      summary: Logout user
-      security:
-        - bearerAuth: []
-      responses:
-        '200':
-          description: Success
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  success:
-                    type: boolean
-                    example: true
-  /api/users:
-    get:
-      tags:
-        - Users
-      summary: List users (admin only)
-      security:
-        - bearerAuth: []
-      parameters:
-        - in: query
-          name: page
-          schema:
-            type: integer
-            default: 1
-        - in: query
-          name: limit
-          schema:
-            type: integer
-            default: 10
-      responses:
-        '200':
-          description: Paginated users
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  success:
-                    type: boolean
-                    example: true
-                  data:
-                    type: array
-                    items:
-                      $ref: '#/components/schemas/User'
-                  meta:
-                    $ref: '#/components/schemas/PaginationMeta'
-  /api/users/{id}:
-    get:
-      tags:
-        - Users
-      summary: Get user by ID (admin only)
-      security:
-        - bearerAuth: []
-      parameters:
-        - in: path
-          name: id
-          required: true
-          schema:
-            type: string
-            format: uuid
-      responses:
-        '200':
-          description: User object
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  success:
-                    type: boolean
-                    example: true
-                  data:
-                    $ref: '#/components/schemas/User'
-        '404':
-          description: Not found
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-    put:
-      tags:
-        - Users
-      summary: Update user (admin only)
-      security:
-        - bearerAuth: []
-      parameters:
-        - in: path
-          name: id
-          required: true
-          schema:
-            type: string
-            format: uuid
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              properties:
-                firstName:
-                  type: string
-                  example: "John"
-                lastName:
-                  type: string
-                  example: "Doe"
-                phone:
-                  type: string
-                  example: "+1-234-567-8900"
-                role:
-                  $ref: '#/components/schemas/Role'
-      responses:
-        '200':
-          description: Updated user
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  success:
-                    type: boolean
-                    example: true
-                  data:
-                    $ref: '#/components/schemas/User'
-    delete:
-      tags:
-        - Users
-      summary: Delete user (admin only)
-      security:
-        - bearerAuth: []
-      parameters:
-        - in: path
-          name: id
-          required: true
-          schema:
-            type: string
-            format: uuid
-      responses:
-        '200':
-          description: Success message
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  success:
-                    type: boolean
-                    example: true
-                  message:
-                    type: string
-                    example: "User deleted successfully"
-  /api/properties:
-    get:
-      tags:
-        - Properties
-      summary: List properties
-      parameters:
-        - in: query
-          name: page
-          schema:
-            type: integer
-        - in: query
-          name: limit
-          schema:
-            type: integer
-        - in: query
-          name: city
-          schema:
-            type: string
-        - in: query
-          name: state
-          schema:
-            type: string
-        - in: query
-          name: type
-          schema:
-            $ref: '#/components/schemas/PropertyType'
-        - in: query
-          name: status
-          schema:
-            $ref: '#/components/schemas/PropertyStatus'
-        - in: query
-          name: minPrice
-          schema:
-            type: number
-        - in: query
-          name: maxPrice
-          schema:
-            type: number
-        - in: query
-          name: bedrooms
-          schema:
-            type: integer
-        - in: query
-          name: bathrooms
-          schema:
-            type: number
-        - in: query
-          name: search
-          schema:
-            type: string
-      responses:
-        '200':
-          description: Paginated properties
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  success:
-                    type: boolean
-                    example: true
-                  data:
-                    type: array
-                    items:
-                      $ref: '#/components/schemas/Property'
-                  meta:
-                    $ref: '#/components/schemas/PaginationMeta'
-    post:
-      tags:
-        - Properties
-      summary: Create property (AGENT/ADMIN)
-      security:
-        - bearerAuth: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/CreatePropertyRequest'
-      responses:
-        '201':
-          description: Property created
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  success:
-                    type: boolean
-                    example: true
-                  data:
-                    $ref: '#/components/schemas/Property'
-  /api/properties/{id}:
-    get:
-      tags:
-        - Properties
-      summary: Get property by ID
-      parameters:
-        - in: path
-          name: id
-          required: true
-          schema:
-            type: string
-            format: uuid
-      responses:
-        '200':
-          description: Property details
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  success:
-                    type: boolean
-                    example: true
-                  data:
-                    $ref: '#/components/schemas/Property'
-        '404':
-          description: Not found
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-    put:
-      tags:
-        - Properties
-      summary: Update property (AGENT owner/ADMIN)
-      security:
-        - bearerAuth: []
-      parameters:
-        - in: path
-          name: id
-          required: true
-          schema:
-            type: string
-            format: uuid
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/UpdatePropertyRequest'
-      responses:
-        '200':
-          description: Property updated
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  success:
-                    type: boolean
-                    example: true
-                  data:
-                    $ref: '#/components/schemas/Property'
-    delete:
-      tags:
-        - Properties
-      summary: Delete property (AGENT owner/ADMIN)
-      security:
-        - bearerAuth: []
-      parameters:
-        - in: path
-          name: id
-          required: true
-          schema:
-            type: string
-            format: uuid
-      responses:
-        '200':
-          description: Success
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  success:
-                    type: boolean
-                    example: true
-  /api/inquiries:
-    post:
-      tags:
-        - Inquiries
-      summary: Create inquiry (CLIENT)
-      security:
-        - bearerAuth: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/CreateInquiryRequest'
-      responses:
-        '201':
-          description: Inquiry created
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  success:
-                    type: boolean
-                    example: true
-                  data:
-                    $ref: '#/components/schemas/Inquiry'
-    get:
-      tags:
-        - Inquiries
-      summary: List all inquiries (ADMIN)
-      security:
-        - bearerAuth: []
-      parameters:
-        - in: query
-          name: page
-          schema:
-            type: integer
-        - in: query
-          name: limit
-          schema:
-            type: integer
-        - in: query
-          name: status
-          schema:
-            $ref: '#/components/schemas/InquiryStatus'
-      responses:
-        '200':
-          description: Paginated inquiries
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  success:
-                    type: boolean
-                    example: true
-                  data:
-                    type: array
-                    items:
-                      $ref: '#/components/schemas/Inquiry'
-                  meta:
-                    $ref: '#/components/schemas/PaginationMeta'
-  /api/inquiries/my:
-    get:
-      tags:
-        - Inquiries
-      summary: Get user's inquiries (CLIENT)
-      security:
-        - bearerAuth: []
-      parameters:
-        - in: query
-          name: page
-          schema:
-            type: integer
-        - in: query
-          name: limit
-          schema:
-            type: integer
-      responses:
-        '200':
-          description: Paginated inquiries
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  success:
-                    type: boolean
-                    example: true
-                  data:
-                    type: array
-                    items:
-                      $ref: '#/components/schemas/Inquiry'
-                  meta:
-                    $ref: '#/components/schemas/PaginationMeta'
-  /api/inquiries/{id}:
-    get:
-      tags:
-        - Inquiries
-      summary: Get inquiry details
-      security:
-        - bearerAuth: []
-      parameters:
-        - in: path
-          name: id
-          required: true
-          schema:
-            type: string
-            format: uuid
-      responses:
-        '200':
-          description: Inquiry details
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  success:
-                    type: boolean
-                    example: true
-                  data:
-                    $ref: '#/components/schemas/Inquiry'
-        '403':
-          description: Forbidden
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-        '404':
-          description: Not found
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-  /api/inquiries/{id}/assign:
-    put:
-      tags:
-        - Inquiries
-      summary: Assign agent to inquiry (ADMIN)
-      security:
-        - bearerAuth: []
-      parameters:
-        - in: path
-          name: id
-          required: true
-          schema:
-            type: string
-            format: uuid
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/AssignInquiryRequest'
-      responses:
-        '200':
-          description: Inquiry assigned
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  success:
-                    type: boolean
-                    example: true
-                  data:
-                    $ref: '#/components/schemas/Inquiry'
-  /api/inquiries/{id}/status:
-    put:
-      tags:
-        - Inquiries
-      summary: Update inquiry status (ADMIN/AGENT)
-      security:
-        - bearerAuth: []
-      parameters:
-        - in: path
-          name: id
-          required: true
-          schema:
-            type: string
-            format: uuid
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/UpdateInquiryStatusRequest'
-      responses:
-        '200':
-          description: Inquiry updated
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  success:
-                    type: boolean
-                    example: true
-                  data:
-                    $ref: '#/components/schemas/Inquiry'
-  /api/favorites:
-    get:
-      tags:
-        - Favorites
-      summary: Get user favorites (CLIENT)
-      security:
-        - bearerAuth: []
-      parameters:
-        - in: query
-          name: page
-          schema:
-            type: integer
-        - in: query
-          name: limit
-          schema:
-            type: integer
-      responses:
-        '200':
-          description: Paginated favorites
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  success:
-                    type: boolean
-                    example: true
-                  data:
-                    type: array
-                    items:
-                      $ref: '#/components/schemas/Favorite'
-                  meta:
-                    $ref: '#/components/schemas/PaginationMeta'
-    post:
-      tags:
-        - Favorites
-      summary: Add to favorites
-      security:
-        - bearerAuth: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [propertyId]
-              properties:
-                propertyId:
-                  type: string
-                  format: uuid
-                  example: 987e6543-e21b-12d3-a456-426614174000
-      responses:
-        '201':
-          description: Added to favorites
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  success:
-                    type: boolean
-                    example: true
-                  data:
-                    $ref: '#/components/schemas/Favorite'
-        '409':
-          description: Already exists
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-  /api/favorites/{propertyId}:
-    delete:
-      tags:
-        - Favorites
-      summary: Remove from favorites
-      security:
-        - bearerAuth: []
-      parameters:
-        - in: path
-          name: propertyId
-          required: true
-          schema:
-            type: string
-            format: uuid
-      responses:
-        '200':
-          description: Removed from favorites
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  success:
-                    type: boolean
-                    example: true
-        '404':
-          description: Not found
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-  /api/agent/dashboard:
-    get:
-      tags:
-        - Agent
-      summary: Get agent dashboard stats (AGENT)
-      security:
-        - bearerAuth: []
-      responses:
-        '200':
-          description: Stats object
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  success:
-                    type: boolean
-                    example: true
-                  data:
-                    type: object
-                    properties:
-                      totalListings:
-                        type: integer
-                        example: 12
-                      activeListings:
-                        type: integer
-                        example: 8
-                      totalLeads:
-                        type: integer
-                        example: 45
-                      newLeads:
-                        type: integer
-                        example: 5
-  /api/agent/listings:
-    get:
-      tags:
-        - Agent
-      summary: Get agent listings (AGENT)
-      security:
-        - bearerAuth: []
-      parameters:
-        - in: query
-          name: page
-          schema:
-            type: integer
-        - in: query
-          name: limit
-          schema:
-            type: integer
-      responses:
-        '200':
-          description: Paginated properties
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  success:
-                    type: boolean
-                    example: true
-                  data:
-                    type: array
-                    items:
-                      $ref: '#/components/schemas/Property'
-                  meta:
-                    $ref: '#/components/schemas/PaginationMeta'
-  /api/agent/leads:
-    get:
-      tags:
-        - Agent
-      summary: Get agent leads/inquiries (AGENT)
-      security:
-        - bearerAuth: []
-      parameters:
-        - in: query
-          name: page
-          schema:
-            type: integer
-        - in: query
-          name: limit
-          schema:
-            type: integer
-      responses:
-        '200':
-          description: Paginated inquiries
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  success:
-                    type: boolean
-                    example: true
-                  data:
-                    type: array
-                    items:
-                      $ref: '#/components/schemas/Inquiry'
-                  meta:
-                    $ref: '#/components/schemas/PaginationMeta'

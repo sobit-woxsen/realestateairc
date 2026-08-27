@@ -26,8 +26,13 @@ app.use(morgan(isProduction ? 'combined' : 'dev'));
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
 
-// Serve static frontend files
-app.use(express.static(path.join(__dirname, '..', 'public')));
+// Serve static frontend files (allow dotfiles for .well-known verification)
+app.use(express.static(path.join(__dirname, '..', 'public'), { dotfiles: 'allow' }));
+
+// MCP Hub Domain Verification route
+app.get('/.well-known/mcp-hub-verification.json', (req, res) => {
+  res.sendFile(path.join(__dirname, '..', 'public', '.well-known', 'mcp-hub-verification.json'));
+});
 
 // Swagger setup
 const swaggerDocument = YAML.load(path.join(__dirname, '..', 'docs', 'openapi.yaml'));

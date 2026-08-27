@@ -34,9 +34,17 @@ app.get('/.well-known/mcp-hub-verification.json', (req, res) => {
   res.sendFile(path.join(__dirname, '..', 'public', '.well-known', 'mcp-hub-verification.json'));
 });
 
-// Swagger setup
+// Swagger setup & raw OpenAPI specification endpoints
 const swaggerDocument = YAML.load(path.join(__dirname, '..', 'docs', 'openapi.yaml'));
 app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerDocument));
+
+app.get('/openapi.json', (req, res) => {
+  res.json(swaggerDocument);
+});
+
+app.get('/openapi.yaml', (req, res) => {
+  res.sendFile(path.join(__dirname, '..', 'docs', 'openapi.yaml'));
+});
 
 // Health check route
 app.get('/api/health', (req, res) => {

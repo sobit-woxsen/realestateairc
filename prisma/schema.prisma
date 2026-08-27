@@ -1,0 +1,115 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  ADMIN
+  AGENT
+  CLIENT
+}
+
+enum PropertyType {
+  HOUSE
+  APARTMENT
+  CONDO
+  TOWNHOUSE
+  LAND
+  COMMERCIAL
+}
+
+enum PropertyStatus {
+  AVAILABLE
+  SOLD
+  PENDING
+  RENTED
+}
+
+enum InquiryStatus {
+  NEW
+  CONTACTED
+  IN_PROGRESS
+  CLOSED
+}
+
+model User {
+  id           String    @id @default(uuid())
+  email        String    @unique
+  password     String
+  firstName    String
+  lastName     String
+  phone        String?
+  role         Role      @default(CLIENT)
+  refreshToken String?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  properties         Property[]
+  inquiriesAsClient  Inquiry[]  @relation("ClientInquiries")
+  inquiriesAsAgent   Inquiry[]  @relation("AgentInquiries")
+  favorites          Favorite[]
+
+  @@map("users")
+}
+
+model Property {
+  id          String         @id @default(uuid())
+  title       String
+  description String
+  type        PropertyType
+  status      PropertyStatus @default(AVAILABLE)
+  price       Decimal
+  area        Float
+  bedrooms    Int
+  bathrooms   Int
+  address     String
+  city        String
+  state       String
+  zipCode     String
+  latitude    Float?
+  longitude   Float?
+  images      String[]
+  amenities   String[]
+  yearBuilt   Int?
+  agentId     String
+  agent       User           @relation(fields: [agentId], references: [id])
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  inquiries Inquiry[]
+  favorites Favorite[]
+
+  @@map("properties")
+}
+
+model Inquiry {
+  id         String        @id @default(uuid())
+  message    String
+  status     InquiryStatus @default(NEW)
+  clientId   String
+  client     User          @relation("ClientInquiries", fields: [clientId], references: [id])
+  propertyId String
+  property   Property      @relation(fields: [propertyId], references: [id])
+  agentId    String?
+  agent      User?         @relation("AgentInquiries", fields: [agentId], references: [id])
+  createdAt  DateTime      @default(now())
+  updatedAt  DateTime      @updatedAt
+
+  @@map("inquiries")
+}
+
+model Favorite {
+  id         String   @id @default(uuid())
+  userId     String
+  user       User     @relation(fields: [userId], references: [id])
+  propertyId String
+  property   Property @relation(fields: [propertyId], references: [id])
+  createdAt  DateTime @default(now())
+
+  @@unique([userId, propertyId])
+  @@map("favorites")
+}

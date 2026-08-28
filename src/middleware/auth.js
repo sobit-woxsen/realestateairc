@@ -1,7 +1,102 @@
+const jwt = require('jsonwebtoken');
+const jwksClient = require('jwks-rsa');
+const config = require('../config');
 const tokenService = require('../services/token.service');
 
+const EXPECTED_ISSUER = config.lockmcpIssuer || process.env.LOCKMCP_ISSUER || '';
+
+// Initialize JWKS client only if issuer is configured or dynamically on demand
+let jwks = null;
+function getJwksClient(issuer) {
+  const iss = issuer || EXPECTED_ISSUER;
+  if (!iss) return null;
+  return jwksClient({
+    jwksUri: `${iss.replace(/\/+$/, '')}/protocol/openid-connect/certs`,
+    cache: true,
+    cacheMaxAge: 10 * 60 * 1000, // 10 minutes cache
+    rateLimit: true,
+    jwksRequestsPerMinute: 10
+  });
+}
+
+if (EXPECTED_ISSUER) {
+  jwks = getJwksClient(EXPECTED_ISSUER);
+}
+
+function getKey(header, callback) {
+  if (!jwks) {
+    return callback(new Error('LockMCP JWKS client not configured. Set LOCKMCP_ISSUER environment variable.'));
+  }
+  jwks.getSigningKey(header.kid, (err, key) => {
+    if (err) return callback(err);
+    const signingKey = key ? (key.getPublicKey() || key.rsaPublicKey) : null;
+    callback(null, signingKey);
+  });
+}
+
+/**
+ * Verifies standard LockMCP / AuthIO Identity Brokering forwarded RS256 token.
+ */
+function verifyLockMcpToken(req, res, next) {
+  const authHeader = req.headers.authorization || '';
+  const [scheme, token] = authHeader.split(' ');
+
+  if (scheme !== 'Bearer' || !token) {
+    return res.status(401).json({
+      success: false,
+      message: 'Missing bearer token'
+    });
+  }
+
+  if (!EXPECTED_ISSUER) {
+    return res.status(401).json({
+      success: false,
+      message: 'LOCKMCP_ISSUER is not configured on this server'
+    });
+  }
+
+  jwt.verify(
+    token,
+    getKey,
+    { algorithms: ['RS256'], issuer: EXPECTED_ISSUER },
+    (err, decoded) => {
+      if (err || !decoded || !decoded.sub || !decoded.exp) {
+        return res.status(401).json({
+          success: false,
+          message: 'Invalid or expired token'
+        });
+      }
+
+      req.lockMcpUserId = decoded.sub;
+      
+      // Determine user role from token claims if present (defaults to CLIENT/AGENT if scoped)
+      const roles = decoded.realm_access?.roles || decoded.roles || [];
+      let role = 'CLIENT';
+      if (roles.includes('ADMIN') || roles.includes('admin') || roles.includes('ROLE_ADMIN')) {
+        role = 'ADMIN';
+      } else if (roles.includes('AGENT') || roles.includes('agent') || roles.includes('ROLE_AGENT')) {
+        role = 'AGENT';
+      }
+
+      req.user = {
+        id: decoded.sub,
+        email: decoded.email || decoded.preferred_username || decoded.sub,
+        role,
+        lockMcpUserId: decoded.sub,
+        claims: decoded
+      };
+
+      next();
+    }
+  );
+}
+
+/**
+ * Unified Authentication Middleware:
+ * Supports both LockMCP RS256 tokens (Identity Brokering) and local HS256 tokens (Portal/Swagger login).
+ */
 const authenticate = (req, res, next) => {
-  const authHeader = req.headers.authorization;
+  const authHeader = req.headers.authorization || '';
 
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
     return res.status(401).json({
@@ -13,6 +108,14 @@ const authenticate = (req, res, next) => {
   const token = authHeader.split(' ')[1];
 
   try {
+    const unverified = jwt.decode(token, { complete: true });
+    
+    // If token is RS256 (LockMCP / AuthIO) or issuer matches LOCKMCP_ISSUER
+    if (unverified && unverified.header && unverified.header.alg === 'RS256') {
+      return verifyLockMcpToken(req, res, next);
+    }
+
+    // Default: Local application JWT token verification (HS256)
     const decoded = tokenService.verifyAccessToken(token);
     req.user = decoded;
     next();
@@ -24,4 +127,7 @@ const authenticate = (req, res, next) => {
   }
 };
 
-module.exports = { authenticate };
+module.exports = {
+  authenticate,
+  verifyLockMcpToken
+};

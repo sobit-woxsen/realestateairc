@@ -15,6 +15,8 @@ services:
         generateValue: true
       - key: NODE_ENV
         value: production
+      - key: LOCKMCP_ISSUER
+        sync: false
 
 databases:
   - name: real-estate-db

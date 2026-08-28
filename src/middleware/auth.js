@@ -69,13 +69,13 @@ function verifyLockMcpToken(req, res, next) {
 
       req.lockMcpUserId = decoded.sub;
       
-      // Determine user role from token claims if present (defaults to CLIENT/AGENT if scoped)
+      // Determine user role from token claims if present (defaults to AGENT)
       const roles = decoded.realm_access?.roles || decoded.roles || [];
-      let role = 'CLIENT';
+      let role = 'AGENT';
       if (roles.includes('ADMIN') || roles.includes('admin') || roles.includes('ROLE_ADMIN')) {
         role = 'ADMIN';
-      } else if (roles.includes('AGENT') || roles.includes('agent') || roles.includes('ROLE_AGENT')) {
-        role = 'AGENT';
+      } else if (roles.includes('CLIENT') || roles.includes('client') || roles.includes('ROLE_CLIENT')) {
+        role = 'CLIENT';
       }
 
       req.user = {

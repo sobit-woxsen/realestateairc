@@ -1,7 +1,9 @@
 const jwt = require('jsonwebtoken');
 const jwksClient = require('jwks-rsa');
+const crypto = require('crypto');
 const config = require('../config');
 const tokenService = require('../services/token.service');
+const prisma = require('../utils/prisma');
 
 const EXPECTED_ISSUER = config.lockmcpIssuer || process.env.LOCKMCP_ISSUER || '';
 
@@ -59,7 +61,7 @@ function verifyLockMcpToken(req, res, next) {
     token,
     getKey,
     { algorithms: ['RS256'], issuer: EXPECTED_ISSUER },
-    (err, decoded) => {
+    async (err, decoded) => {
       if (err || !decoded || !decoded.sub || !decoded.exp) {
         return res.status(401).json({
           success: false,
@@ -68,7 +70,7 @@ function verifyLockMcpToken(req, res, next) {
       }
 
       req.lockMcpUserId = decoded.sub;
-      
+
       // Determine user role from token claims if present (defaults to AGENT)
       const roles = decoded.realm_access?.roles || decoded.roles || [];
       let role = 'AGENT';
@@ -78,15 +80,44 @@ function verifyLockMcpToken(req, res, next) {
         role = 'CLIENT';
       }
 
-      req.user = {
-        id: decoded.sub,
-        email: decoded.email || decoded.preferred_username || decoded.sub,
-        role,
-        lockMcpUserId: decoded.sub,
-        claims: decoded
-      };
+      // Resolve (find-or-create) the local user row this LockMCP identity maps
+      // to. Foreign keys like Property.agentId reference our own `users` table,
+      // not Keycloak — req.user.id must always be a real local id, never the
+      // raw `sub`, or every write referencing it fails its FK constraint.
+      //
+      // Keyed on `email` (already @unique on User) rather than adding a new
+      // column — no schema change needed. If someone already has a local
+      // password-based account under this same email, that row is reused as-is
+      // (same person, one identity) rather than creating a duplicate.
+      const lockMcpEmail = decoded.email || decoded.preferred_username || `${decoded.sub}@lockmcp.local`;
+      try {
+        const localUser = await prisma.user.upsert({
+          where: { email: lockMcpEmail },
+          update: {},
+          create: {
+            email: lockMcpEmail,
+            password: crypto.randomUUID(), // never used to log in locally
+            firstName: decoded.given_name || 'LockMCP',
+            lastName: decoded.family_name || 'User',
+            role,
+          },
+        });
 
-      next();
+        req.user = {
+          id: localUser.id,
+          email: localUser.email,
+          role,
+          lockMcpUserId: decoded.sub,
+          claims: decoded
+        };
+
+        next();
+      } catch (dbErr) {
+        return res.status(500).json({
+          success: false,
+          message: 'Failed to resolve local user for LockMCP identity'
+        });
+      }
     }
   );
 }
